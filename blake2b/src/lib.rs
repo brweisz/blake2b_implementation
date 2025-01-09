@@ -178,9 +178,19 @@ fn blake2b_final(ctx: &mut Blake2bCtx, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // pub fn blake2b(out: &mut Vec<u8>,
-    //                key: &mut Vec<u8>,
-    //                input_message: &mut Vec<u8>) -> i32 {
+    use serde_json;
+    use serde::Deserialize;
+    use std::fs;
+
+    #[derive(Deserialize, Debug)]
+    struct TestCase {
+        hash: String,
+        #[serde(rename = "in")]
+        input: String,
+        key: String,
+        out: String,
+    }
+
     #[test]
     fn blake2b_hashes_correctly() {
         let hex_in = "000102030405060708090a0b0c0d0e0f";
@@ -195,8 +205,35 @@ mod tests {
         assert_eq!(buffer_out, expected_out);
     }
 
-    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    #[test]
+    fn test_hashes() {
+        let file_content = std::fs::read_to_string("./test_vector.json").expect("Failed to read file");
+        let test_cases: Vec<TestCase> =
+            serde_json::from_str(&file_content).expect("Failed to parse JSON");
 
+        for (i, case) in test_cases.iter().enumerate() {
+            println!("Running test case {}", i);
+            run_test(&case.hash, &case.input, &case.key, &case.out);
+        }
+    }
+
+    fn run_test(hash: &str, input: &str, key: &str, expected: &str) {
+        let mut input_message = hex_to_bytes(input);
+        let mut key = hex_to_bytes(key);
+        let expected_out = hex_to_bytes(expected);
+        let mut buffer_out: Vec<u8> = Vec::new();
+        buffer_out.resize(expected_out.len(), 0);
+
+        let result = blake2b(&mut buffer_out, &mut key, &mut input_message);
+
+        assert_eq!(
+            buffer_out, expected_out,
+            "Test failed for input: {:?}, key: {:?}",
+            input, key
+        );
+    }
+
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
         (0..hex.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())

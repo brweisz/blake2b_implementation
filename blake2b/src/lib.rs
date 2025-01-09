@@ -25,7 +25,7 @@ const BLAKE2B_IV: [u64; 8] = [
     0x5BE0CD19137E2179,
 ];
 
-const SIGMA: [[u8; 16]; 12] = [
+const SIGMA: [[usize; 16]; 12] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
     [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
@@ -47,7 +47,6 @@ struct Blake2bCtx {
     h: [u64; 8],   // chained state, es como el acumulador de la compression function
     t: [u64; 2], // total number of bytes, low part y high part del número (pq el mensaje puede ser de hasta 2^128 bytes)
     c: usize,    // pointer for b[]
-    outlen: usize, // digest size
 }
 
 impl Blake2bCtx {
@@ -60,35 +59,19 @@ impl Blake2bCtx {
             h,
             t: [0; 2],
             c: 0,
-            outlen,
         }
     }
 }
 
 // Hash Function
 
-fn b2b_get64(p: &[u64; 8]) -> u64 {
-    p[0] ^
-    p[1] << 8 ^
-    p[2] << 16 ^
-    p[3] << 24 ^
-    p[4] << 32 ^
-    p[5] << 40 ^
-    p[6] << 48 ^
-    p[7] << 56
-}
-
-fn b2b_g(a: u8, b: u8, c: u8, d: u8, x: u64, y: u64, v: &[u64; 16]){
-
-}
-
 pub fn blake2b(out: &mut Vec<u8>, key: &mut Vec<u8>, input_message: &mut Vec<u8>) -> i32 {
-    if (out.len() == 0 || out.len() > 64 || key.len() > 64) {
+    if out.len() == 0 || out.len() > 64 || key.len() > 64 {
         panic!("Illegal input parameters")
     }
     let mut ctx = Blake2bCtx::new(key, out.len());
 
-    if (key.len() > 0) {
+    if key.len() > 0 {
         blake2b_update(&mut ctx, key);
         ctx.c = 128;
     }
@@ -98,9 +81,35 @@ pub fn blake2b(out: &mut Vec<u8>, key: &mut Vec<u8>, input_message: &mut Vec<u8>
     0
 }
 
+fn rotr_64(x: u64, n: u8) -> u64 {
+    (x >> n) ^ (x << (64 - n))
+}
+
+fn b2b_get64(p: &[u8]) -> u64 {
+    (p[0] as u64) ^
+    (p[1] as u64) << 8 ^
+    (p[2] as u64) << 16 ^
+    (p[3] as u64) << 24 ^
+    (p[4] as u64) << 32 ^
+    (p[5] as u64) << 40 ^
+    (p[6] as u64) << 48 ^
+    (p[7] as u64) << 56
+}
+
+fn b2b_g(a: usize, b: usize, c: usize, d: usize, x: u64, y: u64, v: &mut[u64; 16]){
+    v[a] = ((v[a] as u128 + v[b] as u128 + x as u128) % (1<<64)) as u64;
+    v[d] = rotr_64(v[d] ^ v[a], 32);
+    v[c] = ((v[c] as u128 + v[d] as u128) % (1<<64)) as u64;
+    v[b] = rotr_64(v[b] ^ v[c], 24);
+    v[a] = ((v[a] as u128 + v[b] as u128 + y as u128) % (1<<64)) as u64;
+    v[d] = rotr_64(v[d] ^ v[a], 16);
+    v[c] = ((v[c] as u128 + v[d] as u128) % (1<<64)) as u64;
+    v[b] = rotr_64(v[b] ^ v[c], 63);
+}
+
 fn blake2b_update(ctx: &mut Blake2bCtx, input: &mut Vec<u8>) {
     for i in 0..input.len() {
-        if (ctx.c == 128) {
+        if ctx.c == 128 {
             ctx.t[0] += ctx.c as u64;
             if ctx.t[0] < ctx.c as u64 {
                 ctx.t[1] += 1;
@@ -130,25 +139,67 @@ fn blake2b_compress(ctx: &mut Blake2bCtx, last: bool) {
     }
 
     for i in 0..16 {
-        m[i] = b2b_get64(&ctx.b[8*i..8*i+8].into());
+        m[i] = b2b_get64(&ctx.b[8*i..8*i+8]);
     }
 
     for i in 0..12 {
-        b2b_g(0,4,8,12, m[SIGMA[i][0]], m[SIGMA[i][1]], &mut v);
+        b2b_g(0,4,8,12,     m[SIGMA[i][ 0]], m[SIGMA[i][ 1]], &mut v);
+        b2b_g(1, 5,  9, 13, m[SIGMA[i][ 2]], m[SIGMA[i][ 3]], &mut v);
+        b2b_g(2, 6, 10, 14, m[SIGMA[i][ 4]], m[SIGMA[i][ 5]], &mut v);
+        b2b_g(3, 7, 11, 15, m[SIGMA[i][ 6]], m[SIGMA[i][ 7]], &mut v);
+        b2b_g(0, 5, 10, 15, m[SIGMA[i][ 8]], m[SIGMA[i][ 9]], &mut v);
+        b2b_g(1, 6, 11, 12, m[SIGMA[i][10]], m[SIGMA[i][11]], &mut v);
+        b2b_g(2, 7,  8, 13, m[SIGMA[i][12]], m[SIGMA[i][13]], &mut v);
+        b2b_g(3, 4,  9, 14, m[SIGMA[i][14]], m[SIGMA[i][15]], &mut v);
+    }
+
+    for i in 0..8 {
+        ctx.h[i] ^= v[i] ^ v[i+8];
     }
 }
 
 fn blake2b_final(ctx: &mut Blake2bCtx, out: &mut Vec<u8>) {
+    ctx.t[0] += ctx.c as u64;
 
+    if ctx.t[0] < ctx.c as u64{
+        ctx.t[1] += 1;
+    }
+
+    while ctx.c < 128 {
+        ctx.b[ctx.c] = 0;
+        ctx.c += 1;
+    }
+    blake2b_compress(ctx, true);
+    for i in 0..out.len() {
+        out[i] = ((ctx.h[i >> 3] >> (8 * (i & 7))) & 0xFF) as u8;
+    }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn it_works() {
-//         let result = add(2, 2);
-//         assert_eq!(result, 4);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // pub fn blake2b(out: &mut Vec<u8>,
+    //                key: &mut Vec<u8>,
+    //                input_message: &mut Vec<u8>) -> i32 {
+    #[test]
+    fn blake2b_hashes_correctly() {
+        let hex_in = "000102030405060708090a0b0c0d0e0f";
+        let hex_key = "";
+        let hex_out = "bfbabbef45554ccfa0dc83752a19cc35d5920956b301d558d772282bc867009168e9e98606bb5ba73a385de5749228c925a85019b71f72fe29b3cd37ca52efe6";
+        let mut input_message= hex_to_bytes(hex_in);
+        let mut key= hex_to_bytes(hex_key);
+        let expected_out= hex_to_bytes(hex_out);
+        let mut buffer_out = vec![0u8; 64];
+        let result = blake2b(&mut buffer_out, &mut key, &mut input_message);
+
+        assert_eq!(buffer_out, expected_out);
+    }
+
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+}
